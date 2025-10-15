@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-Hans" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>数据字典查看器 · Data Viewer</title>
+    <meta name="description" content="读取 JSON / CSV / JSONL / XLSX 并以字典形式美观展示" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css" />
+    <!-- CSV parser -->
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <!-- XLSX parser -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <span class="logo">📚</span>
+        <div class="titles">
+          <h1>数据字典查看器</h1>
+          <p>支持 JSON / CSV / JSONL / XLSX</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span id="formatBadge" class="badge" title="当前文件格式">—</span>
+        <button id="themeToggle" class="btn ghost" title="切换主题">🌗 主题</button>
+        <button id="layoutToggle" class="btn ghost" title="切换布局">🧱 布局</button>
+        <button id="focusToggle" class="btn ghost" title="专注选中详情">🎯 专注</button>
+        <button id="itemsSelectAll" class="btn ghost" title="全选当前显示条目">✅ 全选</button>
+        <button id="itemsSelectNone" class="btn ghost" title="取消所有选择">✖️ 全不选</button>
+        <a class="btn outline" href="#" id="clearBtn">清空</a>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="controls">
+        <div class="control-block">
+          <label class="label">选择或拖拽文件</label>
+          <div id="dropzone" class="dropzone" title="支持拖拽到此区域">
+            <input id="fileInput" type="file" class="file-input" accept=".json,.csv,.jsonl,.xlsx" />
+            <div class="dropzone-content">
+              <div>将文件拖拽到此处，或点击选择</div>
+              <small>支持：JSON / CSV / JSONL / XLSX</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-block">
+          <label class="label">最多显示条数</label>
+          <input id="countInput" class="input" type="number" min="1" max="10000" value="5" />
+        </div>
+
+        <div class="control-block">
+          <label class="label">搜索（在对象字符串表示中）</label>
+          <input id="searchInput" class="input" type="text" placeholder="输入关键词进行筛选" />
+        </div>
+
+        <div class="control-block" id="sheetBlock" style="display:none">
+          <label class="label">选择工作表（XLSX）</label>
+          <select id="sheetSelect" class="select"></select>
+        </div>
+
+        <div class="control-block">
+          <label class="label">字段显示模式</label>
+          <select id="fieldModeSelect" class="select">
+            <option value="all">全部字段</option>
+            <option value="only">仅选中字段</option>
+            <option value="hide">隐藏选中字段</option>
+          </select>
+        </div>
+
+        <div class="control-block" id="fieldsBlock">
+          <label class="label">选择字段（用于只显示/隐藏）</label>
+          <div class="fields-actions">
+            <button id="fieldsToggle" class="btn">管理字段</button>
+          </div>
+          <div id="fieldsPanel" class="fields-panel" style="display:none">
+            <input id="fieldsSearch" class="input" type="text" placeholder="搜索字段…" />
+            <div class="panel-actions">
+              <button id="fieldsSelectAll" class="btn">全选字段</button>
+              <button id="fieldsSelectNone" class="btn">全不选字段</button>
+            </div>
+            <div id="fieldsList" class="fields-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="list" id="listContainer"></div>
+        <aside class="detail" id="detailContainer">
+          <div class="detail-empty">选择左侧一条数据查看详情</div>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <div>© 数据字典查看器 | 本地解析，数据不离开你的电脑</div>
+    </footer>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
