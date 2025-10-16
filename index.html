@@ -87,6 +87,50 @@
         </div>
       </section>
 
+      <section class="stats" id="statsBlock">
+        <div class="stats-controls">
+          <div class="control-group">
+            <label for="statsFieldScope">统计字段范围：</label>
+            <select id="statsFieldScope" class="select">
+              <option value="all">全部字段</option>
+              <option value="selected">仅选中字段</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label for="statsTopN">TopN 值：</label>
+            <input type="number" id="statsTopN" min="1" max="50" value="10" />
+          </div>
+          <div class="control-group">
+            <label for="statsBins">数值分箱：</label>
+            <input type="number" id="statsBins" min="3" max="50" value="10" />
+          </div>
+          <div class="control-group">
+            <label for="statsTablePct">表格宽度：</label>
+            <input type="range" id="statsTablePct" min="20" max="80" value="50" />
+            <span class="muted" style="font-size:12px;" id="statsTablePctLabel">50%</span>
+          </div>
+          <div class="control-group">
+            <label for="statsBarPct">条形/饼图比例：</label>
+            <input type="range" id="statsBarPct" min="20" max="80" value="60" />
+            <span class="muted" style="font-size:12px;" id="statsBarPctLabel">60% / 40%</span>
+          </div>
+          <div class="control-group">
+            <label for="statsChartMode">图形显示：</label>
+            <select id="statsChartMode" class="select">
+              <option value="both">条形+饼图</option>
+              <option value="bar">仅条形图</option>
+              <option value="pie">仅饼图</option>
+            </select>
+          </div>
+          <button id="statsComputeBtn" class="btn">计算分布</button>
+          <span id="statsStatus" class="muted" style="margin-left:8px; font-size:12px;"></span>
+        </div>
+        <div class="stats-body" id="statsBody">
+          <div id="statsTable" class="stats-table" aria-live="polite"></div>
+          <div id="statsChart" class="stats-chart" aria-live="polite"></div>
+        </div>
+      </section>
+
       <section class="content">
         <div class="list" id="listContainer"></div>
         <aside class="detail" id="detailContainer">

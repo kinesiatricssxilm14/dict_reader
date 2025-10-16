@@ -30,13 +30,61 @@ const state = {
   // 多选与专注模式
   selectedIndices: new Set(),
   focusMode: false,
+  // 统计相关
+  statsTopN: 10,
+  statsBins: 10,
+  stats: null,
+  statsFieldScope: 'all',
+  // 布局相关（统计面板）
+  statsTablePct: 50,
+  statsBarPct: 60,
+  statsField: null,
+  statsChartMode: 'both',
+  lastFileName: null,
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-  bindEls();
-  bindEvents();
-  render();
-});
+function init() {
+  try {
+    bindEls();
+    // 读取统计布局与图形偏好
+    try {
+      const t = parseInt(localStorage.getItem('data-viewer-statsTablePct') || '50', 10);
+      const b = parseInt(localStorage.getItem('data-viewer-statsBarPct') || '60', 10);
+      const m = localStorage.getItem('data-viewer-statsChartMode') || 'both';
+      if (!isNaN(t)) state.statsTablePct = Math.max(20, Math.min(80, t));
+      if (!isNaN(b)) state.statsBarPct = Math.max(20, Math.min(80, b));
+      state.statsChartMode = (m === 'bar' || m === 'pie' || m === 'both') ? m : 'both';
+      if (els.statsTablePct) els.statsTablePct.value = String(state.statsTablePct);
+      if (els.statsBarPct) els.statsBarPct.value = String(state.statsBarPct);
+      if (els.statsTablePctLabel) els.statsTablePctLabel.textContent = state.statsTablePct + '%';
+      if (els.statsBarPctLabel) els.statsBarPctLabel.textContent = `${state.statsBarPct}% / ${100 - state.statsBarPct}%`;
+      if (els.statsChartMode) els.statsChartMode.value = state.statsChartMode;
+    } catch {}
+    bindEvents();
+    render();
+    // 初始应用统计面板布局（表格与图表比例）
+    applyStatsLayout();
+  } catch (err) {
+    console.error('初始化失败:', err);
+    // 在统计区域给出错误提示，避免“无响应”的错觉
+    const chart = document.getElementById('statsChart');
+    if (chart) {
+      chart.innerHTML = '';
+      const e = document.createElement('div');
+      e.className = 'detail-empty';
+      e.textContent = '初始化失败：' + err.message;
+      chart.appendChild(e);
+    }
+    const status = document.getElementById('statsStatus');
+    if (status) status.textContent = '初始化失败：' + err.message;
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
 
 function bindEls() {
   els.fileInput = document.getElementById('fileInput');
@@ -64,69 +112,105 @@ function bindEls() {
   els.itemsSelectNone = document.getElementById('itemsSelectNone');
   els.fieldsSelectAll = document.getElementById('fieldsSelectAll');
   els.fieldsSelectNone = document.getElementById('fieldsSelectNone');
+  // 统计面板元素
+  els.statsBlock = document.getElementById('statsBlock');
+  els.statsTopN = document.getElementById('statsTopN');
+  els.statsBins = document.getElementById('statsBins');
+  els.statsComputeBtn = document.getElementById('statsComputeBtn');
+  els.statsFieldScope = document.getElementById('statsFieldScope');
+  els.statsTable = document.getElementById('statsTable');
+  els.statsChart = document.getElementById('statsChart');
+  els.statsStatus = document.getElementById('statsStatus');
+  // 新增可调布局控件
+  els.statsTablePct = document.getElementById('statsTablePct');
+  els.statsBarPct = document.getElementById('statsBarPct');
+  els.statsTablePctLabel = document.getElementById('statsTablePctLabel');
+  els.statsBarPctLabel = document.getElementById('statsBarPctLabel');
+  els.statsBody = document.getElementById('statsBody');
+  els.statsChartMode = document.getElementById('statsChartMode');
 }
 
 function bindEvents() {
-  els.fileInput.addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (file) await handleFile(file);
-  });
+  if (els.fileInput) {
+    els.fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        await handleFile(file);
+        // 重置 input 的值，避免选择同一文件不触发 change（看起来像要点两次）
+        try { e.target.value = ''; } catch {}
+      }
+    });
+  }
 
   // Drag & drop
-  ['dragenter','dragover'].forEach(ev => {
-    els.dropzone.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); els.dropzone.classList.add('dragover'); });
-  });
-  ['dragleave','drop'].forEach(ev => {
-    els.dropzone.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); els.dropzone.classList.remove('dragover'); });
-  });
-  // 兼容某些浏览器对透明 file input 的点击不响应：点击整个拖拽区触发文件选择
-  els.dropzone.addEventListener('click', () => {
-    if (els.fileInput) els.fileInput.click();
-  });
-  els.dropzone.addEventListener('drop', async (e) => {
-    const file = e.dataTransfer?.files?.[0];
-    if (file) await handleFile(file);
-  });
+  if (els.dropzone) {
+    ['dragenter','dragover'].forEach(ev => {
+      els.dropzone.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); els.dropzone.classList.add('dragover'); });
+    });
+    ['dragleave','drop'].forEach(ev => {
+      els.dropzone.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); els.dropzone.classList.remove('dragover'); });
+    });
+    // 兼容某些浏览器对透明 file input 的点击不响应：点击整个拖拽区触发文件选择
+    els.dropzone.addEventListener('click', () => {
+      if (els.fileInput) els.fileInput.click();
+    });
+    els.dropzone.addEventListener('drop', async (e) => {
+      const file = e.dataTransfer?.files?.[0];
+      if (file) await handleFile(file);
+    });
+  }
 
-  els.countInput.addEventListener('input', () => {
-    const v = parseInt(els.countInput.value || '50', 10);
-    state.visibleCount = Math.max(1, Math.min(10000, v));
-    renderList();
-  });
+  if (els.countInput) {
+    els.countInput.addEventListener('input', () => {
+      const v = parseInt(els.countInput.value || '50', 10);
+      state.visibleCount = Math.max(1, Math.min(10000, v));
+      renderList();
+    });
+  }
 
-  els.searchInput.addEventListener('input', () => {
-    applyFilter();
-  });
+  if (els.searchInput) {
+    els.searchInput.addEventListener('input', () => {
+      applyFilter();
+    });
+  }
 
-  els.sheetSelect.addEventListener('change', () => {
-    if (!state.workbook) return;
-    const sheetName = els.sheetSelect.value;
-    const ws = state.workbook.Sheets[sheetName];
-    state.items = XLSX.utils.sheet_to_json(ws, { defval: null });
-    state.filtered = state.items.slice();
-    renderBadge('xlsx');
-    renderList();
-  });
+  if (els.sheetSelect) {
+    els.sheetSelect.addEventListener('change', () => {
+      if (!state.workbook) return;
+      const sheetName = els.sheetSelect.value;
+      const ws = state.workbook.Sheets[sheetName];
+      state.items = XLSX.utils.sheet_to_json(ws, { defval: null });
+      state.filtered = state.items.slice();
+      renderBadge('xlsx');
+      renderList();
+    });
+  }
 
-  els.themeToggle.addEventListener('click', () => {
-    const html = document.documentElement;
-    const next = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
-    html.setAttribute('data-theme', next);
-  });
+  if (els.themeToggle) {
+    els.themeToggle.addEventListener('click', () => {
+      const html = document.documentElement;
+      const next = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+      html.setAttribute('data-theme', next);
+    });
+  }
 
   // 布局切换：分栏/单列
-  els.layoutToggle.addEventListener('click', () => {
-    const html = document.documentElement;
-    const curr = html.getAttribute('data-layout') || 'split';
-    const next = curr === 'split' ? 'stacked' : 'split';
-    html.setAttribute('data-layout', next);
-    try { localStorage.setItem('data-viewer-layout', next); } catch {}
-  });
+  if (els.layoutToggle) {
+    els.layoutToggle.addEventListener('click', () => {
+      const html = document.documentElement;
+      const curr = html.getAttribute('data-layout') || 'split';
+      const next = curr === 'split' ? 'stacked' : 'split';
+      html.setAttribute('data-layout', next);
+      try { localStorage.setItem('data-viewer-layout', next); } catch {}
+    });
+  }
 
-  els.clearBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    clearAll();
-  });
+  if (els.clearBtn) {
+    els.clearBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      clearAll();
+    });
+  }
 
   // 字段显示模式
   if (els.fieldModeSelect) {
@@ -134,6 +218,9 @@ function bindEvents() {
       state.fieldMode = els.fieldModeSelect.value;
       renderList();
       renderDetail();
+      // 自动刷新统计
+      computeStats();
+      renderStats();
     });
   }
   // 字段面板开关
@@ -190,6 +277,79 @@ function bindEvents() {
       renderDetail();
     });
   }
+
+  // 统计配置与计算
+  if (els.statsTopN) {
+    els.statsTopN.addEventListener('input', () => {
+      const v = parseInt(els.statsTopN.value || '10', 10);
+      state.statsTopN = Math.max(1, Math.min(50, v));
+    });
+  }
+  if (els.statsBins) {
+    els.statsBins.addEventListener('input', () => {
+      const v = parseInt(els.statsBins.value || '10', 10);
+      state.statsBins = Math.max(3, Math.min(50, v));
+    });
+  }
+  // 布局滑块：表格宽度
+  if (els.statsTablePct) {
+    els.statsTablePct.addEventListener('input', () => {
+      const v = parseInt(els.statsTablePct.value || '50', 10);
+      state.statsTablePct = Math.max(20, Math.min(80, v));
+      if (els.statsTablePctLabel) els.statsTablePctLabel.textContent = state.statsTablePct + '%';
+      try { localStorage.setItem('data-viewer-statsTablePct', String(state.statsTablePct)); } catch {}
+      applyStatsLayout();
+    });
+  }
+  // 布局滑块：条形/饼图比例
+  if (els.statsBarPct) {
+    els.statsBarPct.addEventListener('input', () => {
+      const v = parseInt(els.statsBarPct.value || '60', 10);
+      state.statsBarPct = Math.max(20, Math.min(80, v));
+      if (els.statsBarPctLabel) els.statsBarPctLabel.textContent = `${state.statsBarPct}% / ${100 - state.statsBarPct}%`;
+      try { localStorage.setItem('data-viewer-statsBarPct', String(state.statsBarPct)); } catch {}
+      if (state.statsField) {
+        renderStatsChart(state.statsField);
+      }
+    });
+  }
+  if (els.statsChartMode) {
+    els.statsChartMode.addEventListener('change', () => {
+      state.statsChartMode = els.statsChartMode.value || 'both';
+      try { localStorage.setItem('data-viewer-statsChartMode', state.statsChartMode); } catch {}
+      if (state.statsField) renderStatsChart(state.statsField);
+    });
+  }
+  if (els.statsComputeBtn) {
+    els.statsComputeBtn.addEventListener('click', () => {
+      try {
+        computeStats();
+        renderStats();
+        const keys = Object.keys(state.stats || {});
+        updateStatsStatus(keys.length > 0
+          ? `已计算 ${keys.length} 个字段 · 基于 ${state.filtered.length} 条记录`
+          : `暂无统计数据：请加载文件或调整“统计字段范围/管理字段”`);
+      } catch (err) {
+        console.error('统计失败:', err);
+        updateStatsStatus('统计失败：' + err.message);
+        if (els.statsChart) {
+          els.statsChart.innerHTML = '';
+          const e = document.createElement('div'); e.className = 'detail-empty'; e.textContent = '统计失败：' + err.message; els.statsChart.appendChild(e);
+        }
+      }
+    });
+  }
+  if (els.statsFieldScope) {
+    els.statsFieldScope.addEventListener('change', () => {
+      state.statsFieldScope = els.statsFieldScope.value || 'all';
+      computeStats();
+      renderStats();
+      const keys = Object.keys(state.stats || {});
+      updateStatsStatus(keys.length > 0
+        ? `已计算 ${keys.length} 个字段 · 基于 ${state.filtered.length} 条记录`
+        : `暂无统计数据：请在“管理字段”勾选或切到“全部字段”`);
+    });
+  }
 }
 
 function clearAll() {
@@ -204,6 +364,7 @@ function clearAll() {
   state.fieldSet.clear();
   state.fieldMode = 'all';
   state.allKeys = [];
+  state.lastFileName = null;
   els.countInput.value = '5';
   els.searchInput.value = '';
   els.fileInput.value = '';
@@ -212,6 +373,10 @@ function clearAll() {
   if (els.fieldModeSelect) els.fieldModeSelect.value = 'all';
   if (els.fieldsPanel) els.fieldsPanel.style.display = 'none';
   if (els.fieldsList) els.fieldsList.innerHTML = '';
+  // 清理统计面板
+  state.stats = null;
+  if (els.statsTable) els.statsTable.innerHTML = '';
+  if (els.statsChart) els.statsChart.innerHTML = '';
   render();
 }
 
@@ -241,8 +406,9 @@ async function handleFile(file) {
     state.items = result.items;
     state.filtered = state.items.slice();
     state.workbook = result.workbook || null;
-    state.sheetNames = result.sheetNames || [];
-    state.selectedIndices.clear();
+  state.sheetNames = result.sheetNames || [];
+  state.selectedIndices.clear();
+  state.lastFileName = name;
 
     // 收集字段
     state.allKeys = collectAllKeys(state.items);
@@ -258,6 +424,11 @@ async function handleFile(file) {
 
     renderBadge(state.format);
     renderList();
+  // 初次加载后默认计算一次统计
+  computeStats();
+  renderStats();
+  // 显示已加载文件信息（文件名、格式与记录数）
+  updateStatsStatus(`已加载：${name} · 格式：${(state.format||'').toUpperCase()} · 记录数：${state.items.length}`);
   } catch (err) {
     alert('解析失败：' + err.message);
     console.error(err);
@@ -273,10 +444,18 @@ function render() {
   renderBadge(state.format);
   renderList();
   renderDetail();
+  // 初始渲染统计区域（无数据时给出提示）
+  renderStats();
+  updateStatsStatus('请先加载文件或选择字段，然后点击“计算分布”');
+  // 应用初始统计布局
+  applyStatsLayout();
 }
 
 function renderBadge(fmt) {
-  els.formatBadge.textContent = fmt ? fmt.toUpperCase() : '—';
+  if (!els.formatBadge) return;
+  const name = state.lastFileName || '';
+  const count = state.items.length || 0;
+  els.formatBadge.textContent = fmt ? `${fmt.toUpperCase()} · ${name || '—'} · ${count}条` : '—';
 }
 
 function applyFilter() {
@@ -292,6 +471,10 @@ function applyFilter() {
     });
   }
   renderList();
+  // 自动刷新统计
+  computeStats();
+  renderStats();
+  applyStatsLayout();
 }
 
 function renderList() {
@@ -643,6 +826,9 @@ function renderFieldsPanel() {
     cb.addEventListener('change', () => {
       if (cb.checked) state.fieldSet.add(k); else state.fieldSet.delete(k);
       renderList(); renderDetail();
+      // 自动刷新统计
+      computeStats();
+      renderStats();
     });
     const txt = document.createElement('span'); txt.textContent = k;
     wrap.appendChild(cb); wrap.appendChild(txt);
@@ -676,4 +862,249 @@ function renderItemViewer(it) {
     container.appendChild(viewer);
   }
   return container;
+}
+
+// =============================
+// 统计：计算与渲染
+// =============================
+function typeOfValue(v) {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'array';
+  return typeof v; // 'string' | 'number' | 'boolean' | 'object' | 'undefined'
+}
+
+function computeStats() {
+  const items = state.filtered;
+  const stats = Object.create(null);
+  const considerKey = (k) => {
+    if (state.statsFieldScope === 'selected') return state.fieldSet.has(k);
+    // 统计范围为“全部字段”时，不受字段显示模式影响，直接统计所有键
+    return true;
+  };
+  const maxIter = Math.min(items.length, 5000); // 上限避免极端大数据耗时
+  for (let i = 0; i < maxIter; i++) {
+    const it = items[i];
+    let keys;
+    if ('__key' in it || '__value' in it) keys = Object.keys(it);
+    else keys = isObject(it) ? Object.keys(it) : [];
+    keys.filter(considerKey).forEach((k) => {
+      const v = it[k];
+      if (!stats[k]) stats[k] = {
+        nonNull: 0,
+        nulls: 0,
+        types: { string:0, number:0, boolean:0, object:0, array:0, null:0, undefined:0 },
+        unique: new Map(),
+        bool: { true:0, false:0 },
+        nums: [],
+        arrLens: [],
+      };
+      const s = stats[k];
+      const t = typeOfValue(v);
+      s.types[t] = (s.types[t] || 0) + 1;
+      if (v == null) { s.nulls++; return; }
+      s.nonNull++;
+      if (t === 'number') {
+        s.nums.push(v);
+        const key = String(v);
+        s.unique.set(key, (s.unique.get(key) || 0) + 1);
+      } else if (t === 'boolean') {
+        s.bool[v ? 'true' : 'false']++;
+        const key = String(v);
+        s.unique.set(key, (s.unique.get(key) || 0) + 1);
+      } else if (t === 'string') {
+        const key = v;
+        s.unique.set(key, (s.unique.get(key) || 0) + 1);
+      } else if (t === 'array') {
+        s.arrLens.push(v.length);
+      } else if (t === 'object') {
+        // 对象不做唯一统计，主要展示类型与出现次数
+      }
+    });
+  }
+  // 汇总派生指标
+  Object.keys(stats).forEach((k) => {
+    const s = stats[k];
+    s.uniqueCount = s.unique.size;
+    // TopN
+    const entries = Array.from(s.unique.entries());
+    entries.sort((a, b) => b[1] - a[1]);
+    s.topValues = entries.slice(0, state.statsTopN).map(([label, count]) => ({ label, count, ratio: s.nonNull ? count / s.nonNull : 0 }));
+    // 数值统计
+    if (s.nums.length > 0) {
+      const min = Math.min(...s.nums);
+      const max = Math.max(...s.nums);
+      const mean = s.nums.reduce((p, c) => p + c, 0) / s.nums.length;
+      s.numStats = { min, max, mean };
+      s.hist = computeHistogram(s.nums, state.statsBins);
+    }
+    // 数组长度分布（粗略分箱）
+    if (s.arrLens.length > 0) {
+      s.arrHist = computeHistogram(s.arrLens, Math.min(8, state.statsBins));
+    }
+    // 主要类型
+    const types = s.types;
+    const mainType = Object.keys(types).sort((a,b) => types[b]-types[a])[0] || '—';
+    s.mainType = mainType;
+  });
+  state.stats = stats;
+}
+
+function computeHistogram(values, bins = 10) {
+  if (!values || values.length === 0) return [];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (min === max) return [{ label: String(min), count: values.length, ratio: 1 }];
+  const step = (max - min) / bins;
+  const hist = Array.from({ length: bins }, (_, i) => ({ label: `${(min + i*step).toFixed(2)}–${(min + (i+1)*step).toFixed(2)}`, count: 0, ratio: 0 }));
+  values.forEach(v => {
+    let idx = Math.floor((v - min) / step);
+    if (idx >= bins) idx = bins - 1;
+    if (idx < 0) idx = 0;
+    hist[idx].count++;
+  });
+  const total = values.length;
+  hist.forEach(h => { h.ratio = total ? h.count / total : 0; });
+  return hist;
+}
+
+function renderStats() {
+  if (!els.statsTable) return;
+  const container = els.statsTable;
+  container.innerHTML = '';
+  const stats = state.stats || {};
+  const keys = Object.keys(stats);
+  if (keys.length === 0) {
+    const empty = document.createElement('div'); empty.className = 'detail-empty'; empty.textContent = '暂无统计数据。请将统计字段范围设为“全部字段”，或在“管理字段”中勾选至少一个字段。'; container.appendChild(empty);
+    if (els.statsChart) { els.statsChart.innerHTML = ''; }
+    updateStatsStatus('暂无统计数据：请加载文件或调整“统计字段范围/管理字段”');
+    return;
+  }
+  updateStatsStatus(`已计算 ${keys.length} 个字段 · 基于 ${state.filtered.length} 条记录`);
+  // 表头
+  const head = document.createElement('div'); head.className = 'stats-row head';
+  head.innerHTML = '<div class="col field">字段</div><div class="col type">类型</div><div class="col nonnull">非空</div><div class="col nulls">空值</div><div class="col unique">唯一</div><div class="col top">TopN 预览(比例)</div>';
+  container.appendChild(head);
+  // 数据行
+  keys.forEach((k, i) => {
+    const s = stats[k];
+    const row = document.createElement('div'); row.className = 'stats-row'; row.dataset.field = k;
+    const topPreview = (s.topValues || []).slice(0, 3).map(tv => `${escapeHtml(tv.label)} (${tv.count}, ${(tv.ratio*100).toFixed(1)}%)`).join(' | ');
+    row.innerHTML = `
+      <div class="col field">${escapeHtml(k)}</div>
+      <div class="col type">${escapeHtml(s.mainType)}</div>
+      <div class="col nonnull">${s.nonNull}</div>
+      <div class="col nulls">${s.nulls}</div>
+      <div class="col unique">${s.uniqueCount || 0}</div>
+      <div class="col top">${topPreview || '—'}</div>
+    `;
+    row.addEventListener('click', () => { state.statsField = k; renderStatsChart(k); });
+    container.appendChild(row);
+    if (i === 0) { state.statsField = k; renderStatsChart(k); }
+  });
+}
+
+function renderStatsChart(field) {
+  if (!els.statsChart) return;
+  const box = els.statsChart; box.innerHTML = '';
+  const s = state.stats?.[field];
+  if (!s) { box.textContent = '无数据'; return; }
+  state.statsField = field;
+  const title = document.createElement('div'); title.className = 'detail-actions'; title.textContent = `字段「${field}」分布`;
+  box.appendChild(title);
+
+  let data = null; let kind = '';
+  if (s.nums && s.nums.length > 0 && s.hist && s.hist.length > 0) { data = s.hist; kind = '数值分布'; }
+  else if (s.arrLens && s.arrLens.length > 0 && s.arrHist && s.arrHist.length > 0) { data = s.arrHist; kind = '数组长度分布'; }
+  else if ((s.bool.true + s.bool.false) > 0) {
+    const total = (s.bool.true + s.bool.false) || 1;
+    data = [
+      { label: 'true', count: s.bool.true, ratio: s.bool.true / total },
+      { label: 'false', count: s.bool.false, ratio: s.bool.false / total }
+    ];
+    kind = '布尔分布';
+  } else if (s.topValues && s.topValues.length > 0) { data = s.topValues; kind = 'Top 值分布'; }
+
+  if (!data) { const empty = document.createElement('div'); empty.className = 'detail-empty'; empty.textContent = '暂无可视化数据'; box.appendChild(empty); return; }
+
+  const stack = document.createElement('div'); stack.className = 'chart-stack';
+  const boxBar = document.createElement('div'); boxBar.className = 'chart-box';
+  const boxPie = document.createElement('div'); boxPie.className = 'chart-box';
+
+  // 条形图
+  const subtitleBar = document.createElement('div'); subtitleBar.className = 'chart-subtitle'; subtitleBar.textContent = `${kind}（条形图）`;
+  boxBar.appendChild(subtitleBar);
+  const chart = document.createElement('div'); chart.className = 'bars';
+  const max = Math.max(...data.map(d => d.count));
+  data.forEach(d => {
+    const row = document.createElement('div'); row.className = 'bar-row';
+    const label = document.createElement('div'); label.className = 'bar-label'; label.textContent = d.label;
+    const bar = document.createElement('div'); bar.className = 'bar';
+    const fill = document.createElement('div'); fill.className = 'bar-fill';
+    const widthPct = (typeof d.ratio === 'number') ? (d.ratio * 100) : (max ? (d.count / max * 100) : 0);
+    fill.style.width = widthPct + '%';
+    const val = document.createElement('div'); val.className = 'bar-value';
+    const pct = (typeof d.ratio === 'number') ? ` ${(d.ratio*100).toFixed(1)}%` : '';
+    val.textContent = `${d.count}${pct}`;
+    row.title = `${d.label}: ${d.count}${pct ? ' (' + (d.ratio*100).toFixed(1) + '%)' : ''}`;
+    bar.appendChild(fill); row.appendChild(label); row.appendChild(bar); row.appendChild(val);
+    chart.appendChild(row);
+  });
+  boxBar.appendChild(chart);
+
+  // 饼图
+  const subtitlePie = document.createElement('div'); subtitlePie.className = 'chart-subtitle'; subtitlePie.textContent = `${kind}（饼图）`;
+  boxPie.appendChild(subtitlePie);
+  const pie = document.createElement('div'); pie.className = 'pie';
+  const legend = document.createElement('div'); legend.className = 'pie-legend';
+  const colors = ['#4f8cff','#7c5cff','#10b981','#f59e0b','#06b6d4','#ef4444','#22c55e','#8b5cf6','#14b8a6','#f97316','#eab308','#8dd3c7','#fb9a99'];
+  const totalCount = data.reduce((p,c) => p + (typeof c.count === 'number' ? c.count : 0), 0) || 1;
+  let acc = 0;
+  const stops = data.map((d, i) => {
+    const ratio = typeof d.ratio === 'number' ? d.ratio : (d.count / totalCount);
+    const start = acc * 100; acc += ratio; const end = acc * 100;
+    const color = colors[i % colors.length];
+    const li = document.createElement('div'); li.className = 'legend-item';
+    const sw = document.createElement('span'); sw.className = 'swatch'; sw.style.background = color;
+    const name = document.createElement('span'); name.textContent = d.label;
+    const val = document.createElement('span'); val.className = 'muted'; val.textContent = `${d.count}（${(ratio*100).toFixed(1)}%）`;
+    li.title = `${d.label}: ${d.count}（${(ratio*100).toFixed(1)}%）`;
+    li.appendChild(sw); li.appendChild(name); li.appendChild(val);
+    legend.appendChild(li);
+    return `${color} ${start}% ${end}%`;
+  }).join(', ');
+  pie.style.background = `conic-gradient(${stops})`;
+  boxPie.appendChild(pie);
+  boxPie.appendChild(legend);
+
+  const barPct = state.statsBarPct || 60;
+  if (state.statsChartMode === 'both') {
+    stack.appendChild(boxBar);
+    stack.appendChild(boxPie);
+    stack.style.gridTemplateColumns = `${barPct}% ${100 - barPct}%`;
+    box.appendChild(stack);
+  } else if (state.statsChartMode === 'bar') {
+    box.appendChild(boxBar);
+  } else if (state.statsChartMode === 'pie') {
+    box.appendChild(boxPie);
+  }
+}
+
+function updateStatsStatus(msg) {
+  if (!els.statsStatus) return;
+  els.statsStatus.textContent = msg || '';
+}
+
+// 应用统计面板布局：表格宽度与图表比例
+function applyStatsLayout() {
+  try {
+    if (els.statsBody) {
+      const tablePct = state.statsTablePct || 50;
+      const chartPct = 100 - tablePct;
+      els.statsBody.style.gridTemplateColumns = `${tablePct}% ${chartPct}%`;
+    }
+    if (els.statsTablePctLabel) els.statsTablePctLabel.textContent = (state.statsTablePct || 50) + '%';
+    if (els.statsBarPctLabel) els.statsBarPctLabel.textContent = `${state.statsBarPct || 60}% / ${100 - (state.statsBarPct || 60)}%`;
+  } catch (err) {
+    console.warn('应用统计布局失败:', err);
+  }
 }
